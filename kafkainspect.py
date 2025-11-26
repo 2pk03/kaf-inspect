@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import argparse
-from confluent_kafka import Consumer, KafkaException
+from confluent_kafka import Consumer, KafkaException, TopicPartition, OFFSET_INVALID
 from confluent_kafka.admin import AdminClient
 import hashlib
 import requests
@@ -167,24 +167,31 @@ def check_consumer_lag(consumer, topic, group_id):
             print(f"Error: Topic '{topic}' not found.", file=sys.stderr)
             return
 
-        partitions = [
-            (p.id, consumer.get_watermark_offsets(p, timeout=5))
-            for p in metadata.topics[topic].partitions.values()
-        ]
-        
-        committed = consumer.committed([metadata.topics[topic]], timeout=5)
-        
+        # Collect watermark offsets per partition
+        partitions = []
+        watermarks = {}
+        for p in metadata.topics[topic].partitions.values():
+            tp = TopicPartition(topic, p.id)
+            partitions.append(tp)
+            low, high = consumer.get_watermark_offsets(tp, timeout=5)
+            watermarks[tp.partition] = (low, high)
+
+        committed = consumer.committed(partitions, timeout=5) or []
+        committed_map = {tp.partition: tp.offset for tp in committed if tp is not None}
+
         print(f"Consumer Lag for Group '{group_id}' on Topic '{topic}':")
         print("-" * 60)
         print(f"{'Partition':<12} {'High Watermark':<18} {'Committed Offset':<20} {'Lag':<10}")
         print("-" * 60)
 
         total_lag = 0
-        for p_id, (low, high) in partitions:
-            committed_offset = committed[0].offset if committed else -1
-            lag = high - committed_offset if high > 0 and committed_offset > 0 else 0
+        for p_id, (low, high) in watermarks.items():
+            committed_offset = committed_map.get(p_id, OFFSET_INVALID)
+            has_committed = committed_offset is not None and committed_offset != OFFSET_INVALID
+            lag = high - committed_offset if has_committed else high
             total_lag += lag
-            print(f"{p_id:<12} {high:<18} {committed_offset:<20} {lag:<10}")
+            committed_display = committed_offset if has_committed else 'N/A'
+            print(f"{p_id:<12} {high:<18} {committed_display:<20} {lag:<10}")
         
         print("-" * 60)
         print(f"Total Lag: {total_lag}")
@@ -278,6 +285,7 @@ def main():
 
     if args.list_topics:
         list_and_select_topic(consumer)
+        consumer.close()
         return
 
     if args.check_lag:
@@ -285,6 +293,7 @@ def main():
             print("Error: --topic is required when using --check-lag.", file=sys.stderr)
             sys.exit(1)
         check_consumer_lag(consumer, args.topic, args.group_id)
+        consumer.close()
         return
 
     if args.search:

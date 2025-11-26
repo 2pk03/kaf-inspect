@@ -1,6 +1,6 @@
 # Kafka Inspector
 
-A powerful, multi-purpose command-line tool to inspect Kafka topics.
+A fast, multi-purpose Kafka CLI to inspect topics, find duplicates, peek/search messages, and check consumer lag.
 
 ## Features
 
@@ -12,6 +12,19 @@ A powerful, multi-purpose command-line tool to inspect Kafka topics.
 -   **Message Peeking**: Quickly view the first or last N messages on a topic.
 -   **Flexible Storage**: Uses an in-memory store by default and can switch to a SQLite backend for large-scale operations.
 -   **Structured Output**: Output data in plain text, `JSONL`, or `CSV` for easy integration with other tools.
+
+## Quick start
+
+```bash
+pip install confluent-kafka requests
+
+# List topics or get an overview fast
+python3 kafkainspect.py --bootstrap-servers localhost:9092 --list-topics
+python3 kafkainspect.py --bootstrap-servers localhost:9092 --overview
+
+# Find duplicate messages by value/key or JSON field
+python3 kafkainspect.py --bootstrap-servers localhost:9092 --topic my-topic --field user.id
+```
 
 ## Installation
 

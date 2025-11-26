@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch, call
 import json
 import requests
-from kafkainspect import hash_payload, get_field_from_json, main, list_and_select_topic
+from kafkainspect import hash_payload, get_field_from_json, main, list_and_select_topic, OFFSET_INVALID
 
 # Mock Message class to simulate Kafka messages
 class MockMessage:
@@ -158,6 +158,52 @@ class TestKafkaInspectE2E(unittest.TestCase):
         with patch('sys.argv', argv):
             main()
             mock_consumer_instance.close.assert_called_once()
+
+    @patch('kafkainspect.TopicPartition')
+    @patch('kafkainspect.Consumer')
+    @patch('sys.stdout')
+    def test_check_consumer_lag_per_partition(self, mock_stdout, MockConsumer, MockTopicPartition):
+        """Lag calculation should use per-partition commits and handle uncommitted partitions."""
+        mock_consumer_instance = MockConsumer.return_value
+
+        # Partition metadata
+        p0 = MagicMock(id=0)
+        p1 = MagicMock(id=1)
+        topic_meta = MagicMock(partitions={0: p0, 1: p1})
+        metadata = MagicMock(topics={'test': topic_meta})
+        mock_consumer_instance.list_topics.return_value = metadata
+
+        # Watermarks per partition
+        mock_consumer_instance.get_watermark_offsets.side_effect = [(0, 10), (0, 5)]
+
+        # TopicPartition factory
+        def _tp(topic, partition, offset=None):
+            tp = MagicMock()
+            tp.partition = partition
+            tp.offset = offset
+            return tp
+        MockTopicPartition.side_effect = _tp
+
+        # Committed offsets: first committed, second uncommitted
+        mock_consumer_instance.committed.return_value = [
+            _tp('test', 0, 4),
+            _tp('test', 1, OFFSET_INVALID)
+        ]
+
+        argv = ['kafkainspect.py', '--bootstrap-servers', 'mock', '--topic', 'test', '--check-lag']
+        with patch('sys.argv', argv):
+            main()
+
+        mock_consumer_instance.close.assert_called_once()
+        mock_consumer_instance.committed.assert_called_once()
+
+        output = "".join(c[0][0] for c in mock_stdout.write.call_args_list)
+        self.assertIn("0            10", output)
+        self.assertIn("4", output)
+        self.assertIn("6", output) # 10 - 4
+        self.assertIn("1            5", output)
+        self.assertIn("N/A", output)
+        self.assertIn("Total Lag: 11", output)
 
 
 class TestKafkaInspectOverview(unittest.TestCase):
