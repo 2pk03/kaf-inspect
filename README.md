@@ -190,3 +190,25 @@ options:
   --output OUTPUT       Optional path to output file (e.g., out.txt:text, out.jsonl:jsonl, out.csv:csv)
   --silent              Suppress stdout output of duplicates
 ```
+## Architecture Context
+
+This tool addresses common Kafka debugging scenarios described in my architecture guide — particularly around consumer lag interpretation, topic inspection, and detecting idempotency failures (duplicates).
+
+**Full guide:** [Apache Kafka® Architecture Leadership](https://www.novatechflow.com/p/kafka-architecture-leadership.html)
+
+### When to Use
+
+| Scenario | Command |
+|----------|---------|
+| "Is my consumer falling behind?" | `--check-lag` |
+| "What topics exist in this cluster?" | `--list-topics` / `--overview` |
+| "Are we producing duplicates?" | `--field user.id` or `--dedup-by key` |
+| "Find all error messages" | `--search "error"` |
+| "What's actually in this topic?" | `--peek 10` |
+
+---
+
+**Running Kafka in production?**
+
+→ [Consulting Services](https://www.novatechflow.com/p/consulting-services.html)  
+→ [Book a call](https://cal.com/alexanderalten)
