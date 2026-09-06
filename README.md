@@ -12,11 +12,19 @@ A fast, multi-purpose Kafka CLI to inspect topics, find duplicates, peek/search 
 -   **Message Peeking**: Quickly view the first or last N messages on a topic.
 -   **Flexible Storage**: Uses an in-memory store by default and can switch to a SQLite backend for large-scale operations.
 -   **Structured Output**: Output data in plain text, `JSONL`, or `CSV` for easy integration with other tools.
+-   **Secured Clusters**: Pass any librdkafka property with `-X` for TLS and SASL authentication.
+
+## Safety
+
+The tool assigns partitions directly instead of joining a consumer group, and runs with
+`enable.auto.commit=false`. Pointing `--group-id` at a production group is therefore safe:
+`--check-lag` reads that group's committed offsets without ever joining it, and no scan can
+trigger a rebalance or move another consumer's offsets.
 
 ## Quick start
 
 ```bash
-pip install confluent-kafka requests
+pip install -r requirements.txt
 
 # List topics or get an overview fast
 python3 kafkainspect.py --bootstrap-servers localhost:9092 --list-topics
@@ -32,7 +40,7 @@ python3 kafkainspect.py --bootstrap-servers localhost:9092 --topic my-topic --fi
 2.  Install the required Python packages:
 
     ```bash
-    pip install confluent-kafka requests
+    pip install -r requirements.txt
     ```
 
 ## Testing
@@ -98,9 +106,33 @@ python3 kafkainspect.py \
   --check-lag
 ```
 
+### Connecting to a Secured Cluster
+
+Any librdkafka configuration property can be supplied with `-X KEY=VALUE`, repeated as needed:
+
+```bash
+python3 kafkainspect.py \
+  --bootstrap-servers broker:9093 \
+  --topic my-topic \
+  -X security.protocol=SASL_SSL \
+  -X sasl.mechanism=SCRAM-SHA-512 \
+  -X sasl.username=inspector \
+  -X sasl.password="$KAFKA_PASSWORD" \
+  --peek 5
+```
+
+Schema Registry and Kafka Connect credentials are read from the environment rather than the
+command line, so they do not appear in your shell history or in `ps`:
+
+```bash
+export KAFKAINSPECT_SCHEMA_REGISTRY_AUTH='user:password'
+export KAFKAINSPECT_CONNECT_AUTH='user:password'
+```
+
 ### Peeking at Messages
 
 Quickly view the last 5 messages on a topic. Use a negative number to see the first 5 (e.g., `--peek -5`).
+Last-N seeks to the end of each partition rather than reading the topic from the beginning.
 
 ```bash
 python3 kafkainspect.py \
@@ -143,6 +175,10 @@ python3 kafkainspect.py \
   --sqlite /tmp/kafka_dedup.db
 ```
 
+Hashes are scoped by topic, and any hashes recorded for that topic by an earlier run are cleared
+at startup so a repeated scan does not report every message as a duplicate. Pass `--sqlite-resume`
+to keep them and continue a previous scan.
+
 ### Writing Output to a File (JSONL)
 
 Save the details of duplicate messages to a file in `JSONL` format. Also supports `csv` and `text`.
@@ -157,9 +193,12 @@ python3 kafkainspect.py \
 ### Command-Line Arguments
 
 ```
-usage: kafkainspect.py [-h] --bootstrap-servers BOOTSTRAP_SERVERS [--topic TOPIC] [--overview] [--schema-registry-url SCHEMA_REGISTRY_URL] [--connect-url CONNECT_URL] [--list-topics] [--check-lag]
-                       [--search SEARCH] [--regex] [--peek PEEK] [--group-id GROUP_ID] [--start {earliest,latest}] [--dedup-by {value,key}] [--field FIELD] [--max-messages MAX_MESSAGES]
-                       [--sqlite SQLITE] [--output OUTPUT] [--silent]
+usage: kafkainspect.py [-h] --bootstrap-servers BOOTSTRAP_SERVERS [--topic TOPIC] [--overview]
+                       [--schema-registry-url SCHEMA_REGISTRY_URL] [--connect-url CONNECT_URL]
+                       [--list-topics] [--check-lag] [--search SEARCH] [--regex] [--peek PEEK]
+                       [--group-id GROUP_ID] [--start {earliest,latest}] [--dedup-by {value,key}]
+                       [--field FIELD] [--max-messages MAX_MESSAGES] [--sqlite SQLITE]
+                       [--sqlite-resume] [--output OUTPUT] [--silent] [-X KEY=VALUE]
 
 Kafka topic inspector and deduplication tool.
 
@@ -167,7 +206,7 @@ options:
   -h, --help            show this help message and exit
   --bootstrap-servers BOOTSTRAP_SERVERS
                         Comma-separated list of Kafka bootstrap servers
-  --topic TOPIC         Kafka topic to scan. Not required if --list-topics or --check-lag is used.
+  --topic TOPIC         Kafka topic to scan. Not required if --list-topics or --overview is used.
   --overview            Display a high-level overview of the cluster.
   --schema-registry-url SCHEMA_REGISTRY_URL
                         URL for the Schema Registry to include in overview.
@@ -187,8 +226,13 @@ options:
   --max-messages MAX_MESSAGES
                         Limit messages to avoid OOM
   --sqlite SQLITE       Optional SQLite path for large-scale deduplication
-  --output OUTPUT       Optional path to output file (e.g., out.txt:text, out.jsonl:jsonl, out.csv:csv)
+  --sqlite-resume       Keep hashes recorded by earlier runs instead of clearing them for this
+                        topic.
+  --output OUTPUT       Optional path to output file (e.g., out.txt:text, out.jsonl:jsonl,
+                        out.csv:csv)
   --silent              Suppress stdout output of duplicates
+  -X KEY=VALUE          librdkafka configuration property, repeatable (e.g. -X
+                        security.protocol=SASL_SSL -X sasl.mechanism=SCRAM-SHA-512)
 ```
 ## Architecture Context
 
