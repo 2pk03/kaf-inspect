@@ -1,0 +1,74 @@
+name: dependabot auto-merge
+
+on:
+  workflow_run:
+    workflows: ["tests"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
+
+    steps:
+      - name: Resolve pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
+                 --json number,title,author --jq '.[0] // empty')
+          if [ -z "$pr" ]; then
+            echo "No open pull request for $BRANCH"
+            exit 0
+          fi
+          if [ "$(jq -r .author.login <<<"$pr")" != "app/dependabot" ]; then
+            echo "Pull request is not authored by Dependabot"
+            exit 0
+          fi
+          {
+            echo "number=$(jq -r .number <<<"$pr")"
+            echo "title=$(jq -r .title <<<"$pr")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Classify update
+        id: classify
+        if: steps.pr.outputs.number
+        env:
+          TITLE: ${{ steps.pr.outputs.title }}
+        run: |
+          set -euo pipefail
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import os, re
+          match = re.search(r"\bfrom (\S+) to (\S+)", os.environ["TITLE"])
+          if match:
+              old, new = (v.lstrip("v").split(".")[0] for v in match.groups())
+              print(f"merge={'true' if old == new else 'false'}")
+          else:
+              print("merge=false")
+          PY
+
+      - name: Merge
+        if: steps.classify.outputs.merge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+        run: gh pr merge "$NUMBER" --repo "$REPO" --squash --delete-branch
+
+      - name: Report skip
+        if: steps.pr.outputs.number && steps.classify.outputs.merge != 'true'
+        env:
+          TITLE: ${{ steps.pr.outputs.title }}
+        run: |
+          echo "Left open for review (major or grouped update): $TITLE"
